@@ -1,4 +1,7 @@
 const nodemailer = require('nodemailer');
+const { createLogger } = require('../utils/logger');
+
+const logger = createLogger('emailService');
 
 const gmailUser = process.env.GMAIL_USER;
 const gmailAppPassword = process.env.GMAIL_APP_PASSWORD;
@@ -44,10 +47,11 @@ async function sendMail({ to, subject, text, html }) {
 
     return info;
   } catch (err) {
-    console.error('Error sending email:', {
+    // Log the message only: the full error object can include SMTP transcript details.
+    logger.error('Error sending email', {
       to,
       subject,
-      error: err,
+      errorMessage: err.message,
     });
     throw new Error('Failed to send email');
   }
