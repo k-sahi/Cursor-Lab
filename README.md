@@ -1,6 +1,6 @@
 # TaskFlow
 
-[![ci](https://github.com/k-sahi/Cursor-Lab/actions/workflows/ci.yml/badge.svg)](https://github.com/k-sahi/Cursor-Lab/actions/workflows/ci.yml)
+[![ci](https://github.com/k-sahi/CursorLab_Taskflow/actions/workflows/ci.yml/badge.svg)](https://github.com/k-sahi/CursorLab_Taskflow/actions/workflows/ci.yml)
 
 A full-stack project and task manager. Sign up, create projects, add tasks with a status and a priority, and get in-app notifications (plus optional email) when things change.
 
@@ -58,8 +58,8 @@ Or use a [MongoDB Atlas](https://www.mongodb.com/atlas) connection string in the
 ### 2. Back end
 
 ```bash
-git clone https://github.com/k-sahi/Cursor-Lab.git
-cd Cursor-Lab/TaskFlow-Backend
+git clone https://github.com/k-sahi/CursorLab_Taskflow.git
+cd CursorLab_Taskflow/TaskFlow-Backend
 npm install
 cp .env.example .env      # set JWT_SECRET
 npm start                 # http://localhost:4000
