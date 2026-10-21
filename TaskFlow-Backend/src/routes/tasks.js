@@ -3,6 +3,7 @@ const Task = require('../models/Task');
 const Project = require('../models/Project');
 const requireAuth = require('../middleware/requireAuth');
 const notificationService = require('../services/notificationService');
+const { validateEnum } = require('../utils/validation');
 
 const router = express.Router({ mergeParams: true });
 
@@ -19,30 +20,21 @@ async function ensureProjectOwned(req, res, next) {
 
 router.use(ensureProjectOwned);
 
-function validatePriority(priority) {
-  if (priority === undefined || priority === null) {
-    return { ok: true, value: undefined };
-  }
+// Validates the optional status and priority fields of a request body.
+// Returns { ok: true, fields } with only the fields that were provided,
+// or { ok: false, message }.
+function validateTaskFields(body) {
+  const fields = {};
 
-  if (typeof priority !== 'string') {
-    return { ok: false, message: 'Priority must be a string.' };
-  }
+  const status = validateEnum(body.status, Task.STATUSES, 'Status');
+  if (!status.ok) return status;
+  if (status.value !== undefined) fields.status = status.value;
 
-  const trimmed = priority.trim();
-  if (!trimmed) {
-    return { ok: true, value: undefined };
-  }
+  const priority = validateEnum(body.priority, Task.PRIORITIES, 'Priority');
+  if (!priority.ok) return priority;
+  if (priority.value !== undefined) fields.priority = priority.value;
 
-  if (!Task.PRIORITIES.includes(trimmed)) {
-    return {
-      ok: false,
-      message: `Invalid priority: ${trimmed}. Allowed priorities are: ${Task.PRIORITIES.join(
-        ', '
-      )}.`,
-    };
-  }
-
-  return { ok: true, value: trimmed };
+  return { ok: true, fields };
 }
 
 router.get('/', async (req, res) => {
@@ -51,21 +43,21 @@ router.get('/', async (req, res) => {
 });
 
 router.post('/', async (req, res) => {
-  const { title, priority } = req.body;
+  const { title } = req.body || {};
 
-  if (!title || !title.trim()) {
+  if (typeof title !== 'string' || !title.trim()) {
     return res.status(400).json({ message: 'Title is required' });
   }
 
-  const priorityResult = validatePriority(priority);
-  if (!priorityResult.ok) {
-    return res.status(400).json({ message: priorityResult.message });
+  const result = validateTaskFields(req.body);
+  if (!result.ok) {
+    return res.status(400).json({ message: result.message });
   }
 
   const task = await Task.create({
     project: req.params.projectId,
     title: title.trim(),
-    ...(priorityResult.value !== undefined ? { priority: priorityResult.value } : {}),
+    ...result.fields,
   });
 
   await notificationService.taskCreated(req.userId, req.userEmail, task, req.project?.name);
@@ -73,30 +65,34 @@ router.post('/', async (req, res) => {
   res.status(201).json({ task });
 });
 
+// Partial update: send any of title, status, priority.
 router.put('/:taskId', async (req, res) => {
-  const { title, priority } = req.body;
+  const { title } = req.body || {};
+  const update = {};
 
-  if (!title || !title.trim()) {
-    return res.status(400).json({ message: 'Title is required' });
+  if (title !== undefined) {
+    if (typeof title !== 'string' || !title.trim()) {
+      return res.status(400).json({ message: 'Title cannot be empty' });
+    }
+    update.title = title.trim();
   }
 
-  const priorityResult = validatePriority(priority);
-  if (!priorityResult.ok) {
-    return res.status(400).json({ message: priorityResult.message });
+  const result = validateTaskFields(req.body || {});
+  if (!result.ok) {
+    return res.status(400).json({ message: result.message });
   }
+  Object.assign(update, result.fields);
 
-  const update = {
-    title: title.trim(),
-  };
-
-  if (priorityResult.value !== undefined) {
-    update.priority = priorityResult.value;
+  if (Object.keys(update).length === 0) {
+    return res
+      .status(400)
+      .json({ message: 'Nothing to update: send title, status, or priority' });
   }
 
   const task = await Task.findOneAndUpdate(
     { _id: req.params.taskId, project: req.params.projectId },
     update,
-    { new: true }
+    { new: true, runValidators: true }
   );
 
   if (!task) {

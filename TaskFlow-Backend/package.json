@@ -1,12 +1,13 @@
 {
   "name": "taskflow-backend",
   "version": "1.0.0",
-  "description": "",
+  "description": "TaskFlow REST API: Express 5, MongoDB (Mongoose), JWT auth, notifications",
   "main": "server.js",
   "scripts": {
+    "start": "node server.js",
     "test": "jest",
     "test:watch": "jest --watchAll",
-    "start": "node server.js"
+    "migrate:tasks": "node scripts/migrate-task-status.js"
   },
   "author": "",
   "license": "ISC",
@@ -21,5 +22,8 @@
   },
   "devDependencies": {
     "jest": "^29.7.0"
+  },
+  "engines": {
+    "node": ">=20.19"
   }
 }

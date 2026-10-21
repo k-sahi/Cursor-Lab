@@ -1,6 +1,9 @@
 const mongoose = require('mongoose');
 
-const TASK_PRIORITIES = ['urgent', 'blocked', 'in_review'];
+// Status is where a task is in the workflow; priority is how important it is.
+// They are independent: a task can be both urgent and blocked.
+const TASK_STATUSES = ['todo', 'in_progress', 'in_review', 'blocked', 'done'];
+const TASK_PRIORITIES = ['low', 'medium', 'high', 'urgent'];
 
 const taskSchema = new mongoose.Schema(
   {
@@ -16,15 +19,21 @@ const taskSchema = new mongoose.Schema(
       trim: true,
       maxlength: 500,
     },
+    status: {
+      type: String,
+      enum: TASK_STATUSES,
+      default: 'todo',
+    },
     priority: {
       type: String,
       enum: TASK_PRIORITIES,
-      default: 'in_review',
+      default: 'medium',
     },
   },
   { timestamps: true }
 );
 
+taskSchema.statics.STATUSES = TASK_STATUSES;
 taskSchema.statics.PRIORITIES = TASK_PRIORITIES;
 
 const Task = mongoose.model('Task', taskSchema);
