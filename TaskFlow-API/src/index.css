@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+@theme {
+  --color-byte-bg: #05000b;
+  --color-byte-surface: #0b0614;
+  --color-byte-primary: #ff6a3d;
+  --color-byte-secondary: #ff2ddf;
+  --color-byte-accent: #8e5bff;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
+  background: radial-gradient(circle at top, rgb(102 51 153 / 0.35), transparent 55%),
+    radial-gradient(circle at bottom, rgb(255 111 145 / 0.25), transparent 60%),
+    radial-gradient(circle at left, rgb(255 159 67 / 0.2), transparent 55%),
+    var(--color-byte-bg);
+  color: rgb(243 244 246);
+}
+
+#root {
+  min-height: 100vh;
+}
+
