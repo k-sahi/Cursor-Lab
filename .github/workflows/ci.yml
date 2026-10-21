@@ -1,0 +1,53 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    name: Backend tests (Jest + MongoDB)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: TaskFlow-Backend
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 })'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      MONGO_URI_TEST: mongodb://localhost:27017
+      JWT_SECRET: ci-test-secret
+      JWT_EXPIRES_IN: 1h
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: TaskFlow-Backend/package-lock.json
+      - run: npm ci
+      - run: npx jest --ci --verbose
+
+  frontend:
+    name: Frontend lint + build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: TaskFlow-API
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: TaskFlow-API/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
