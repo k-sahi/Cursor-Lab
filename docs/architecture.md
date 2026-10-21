@@ -1,12 +1,12 @@
-# Deep dive
+# Architecture
 
-The long version of the [README](../README.md). Read it with the code open: every section points at the file it describes.
+How TaskFlow works: request lifecycle, auth, data model, API reference, side effects, front end, tests and the Cursor setup.
 
 ---
 
 ## 1. How a request flows
 
-Take "add a task to a project" from click to database and back:
+Adding a task to a project, from click to database and back:
 
 ```mermaid
 sequenceDiagram
@@ -20,16 +20,16 @@ sequenceDiagram
   S->>A: /api/projects router → requireAuth
   A-->>T: req.userId, req.userEmail from the JWT
   T->>DB: ensureProjectOwned: Project.findOne({ _id, owner: userId })
-  T->>T: validate title + priority
+  T->>T: validate title, status, priority
   T->>DB: Task.create(...)
   T->>N: taskCreated(...)
   N->>DB: Notification.create(...)
   T-->>UI: 201 { task }
 ```
 
-Four ideas carry the whole back end:
+Four design rules shape the back end:
 
-1. **Everything lives under `/api/*`.** `server.js` mounts three routers: `auth`, `projects` and `notifications`. Tasks are not mounted at the top level; they hang off projects (`router.use('/:projectId/tasks', ...)` in `projects.js`) with `mergeParams: true` so the tasks router can read `:projectId`.
+1. **Everything lives under `/api/*`.** `src/app.js` mounts three routers: `auth`, `projects` and `notifications`. Tasks are not mounted at the top level; they hang off projects (`router.use('/:projectId/tasks', ...)` in `projects.js`) with `mergeParams: true` so the tasks router can read `:projectId`.
 2. **Auth is middleware, not a per-route check.** Protected routers call `router.use(requireAuth)` once at the top.
 3. **Ownership is a query, not an `if`.** Every lookup includes `owner: req.userId`. Someone else's project simply isn't found, so the API returns `404`, which also avoids leaking that the id exists.
 4. **Side effects run after the write.** The notification is recorded only once the database mutation succeeded.
@@ -40,9 +40,9 @@ Four ideas carry the whole back end:
 
 - **Register** (`POST /api/auth/register`): validates `name`, `email`, `password`, rejects duplicates with `409`, hashes the password with bcrypt (cost 10) and stores only `passwordHash`.
 - **Login** (`POST /api/auth/login`): the `passwordHash` field has `select: false` on the schema, so login explicitly asks for it with `.select('+passwordHash')`. Wrong email and wrong password return the **same** `401` message, so an attacker can't probe which emails exist.
-- **Token:** both endpoints sign a JWT with `sub` (user id) and `email`, using `JWT_SECRET` and `JWT_EXPIRES_IN`.
-- **Me** (`GET /api/auth/me`): the front end calls this on load to validate a stored token.
-- **requireAuth:** reads `Authorization: Bearer <token>`, verifies it, and puts `req.userId` and `req.userEmail` on the request.
+- **Token:** both endpoints sign a JWT with `sub` (user id) and `email`, using `JWT_SECRET` and `JWT_EXPIRES_IN`, read only through `getJwtConfig()` in `src/config.js`. There is no fallback secret; `server.js` refuses to start if either value is missing.
+- **Me** (`GET /api/auth/me`): the front end calls this on load to validate a stored token. It is protected by `requireAuth` like every other route.
+- **requireAuth:** reads `Authorization: Bearer <token>`, verifies it, and puts `req.userId` and `req.userEmail` on the request. Missing, malformed, wrongly signed or expired tokens get `401 { message }` (`"Token expired"` for the last), never a 500.
 
 On the front end, the token and user are kept in `localStorage` under `tf_token` and `tf_user` and sent on every call.
 
@@ -54,7 +54,7 @@ On the front end, the token and user are kept in `localStorage` under `tf_token`
 |---|---|---|
 | `User` | `name`, `email` (unique, lowercased), `passwordHash` (hidden by default) | `hashPassword` static, `comparePassword` method |
 | `Project` | `owner` → User, `name`, `code` (uppercased), `description` | unique index on `{ owner, code }`: codes are unique **per user** |
-| `Task` | `project` → Project, `title`, `priority` | `priority` ∈ `urgent`, `blocked`, `in_review` (default), exposed as `Task.PRIORITIES` |
+| `Task` | `project` → Project, `title`, `status`, `priority` | `status` ∈ `todo` (default), `in_progress`, `in_review`, `blocked`, `done` (`Task.STATUSES`); `priority` ∈ `low`, `medium` (default), `high`, `urgent` (`Task.PRIORITIES`) |
 | `Notification` | `user` → User, `type`, `title`, `message` | index on `{ user, createdAt: -1 }` to serve "newest first" |
 
 Deleting a project also deletes its tasks (`Task.deleteMany` in `projects.js`). MongoDB has no foreign-key cascade; the app does it.
@@ -62,6 +62,8 @@ Deleting a project also deletes its tasks (`Task.deleteMany` in `projects.js`). 
 ## 4. API reference
 
 All responses are JSON. Collections come back as `{ <plural>: [...] }`, single items as `{ <singular>: {...} }`, errors as `{ message }`.
+
+Error statuses: `400` for missing or invalid fields, a malformed id or malformed JSON; `401` for a missing, invalid or expired token; `404` for anything you don't own; `409` for a duplicate email or a duplicate project code for the same user; `500` (generic message, details only in the server log) for everything else. These mappings live in `src/middleware/errorHandler.js`.
 
 | Method | Path | Auth | Body / query | Returns |
 |---|---|---|---|---|
@@ -74,8 +76,8 @@ All responses are JSON. Collections come back as `{ <plural>: [...] }`, single i
 | PUT | `/api/projects/:id` | ✓ | any of `name, code, description` | `{ project }` |
 | DELETE | `/api/projects/:id` | ✓ | | `204` (tasks deleted too) |
 | GET | `/api/projects/:projectId/tasks` | ✓ | | `{ tasks }` |
-| POST | `/api/projects/:projectId/tasks` | ✓ | `title, priority?` | `201 { task }` |
-| PUT | `/api/projects/:projectId/tasks/:taskId` | ✓ | `title, priority?` | `{ task }` |
+| POST | `/api/projects/:projectId/tasks` | ✓ | `title, status?, priority?` | `201 { task }` |
+| PUT | `/api/projects/:projectId/tasks/:taskId` | ✓ | any of `title, status, priority` | `{ task }` |
 | DELETE | `/api/projects/:projectId/tasks/:taskId` | ✓ | | `204` |
 | GET | `/api/notifications` | ✓ | `?limit=50` (max 100) | `{ notifications }` |
 | DELETE | `/api/notifications` | ✓ | | `204` (clears all) |
@@ -115,13 +117,29 @@ Logging goes through `src/utils/logger.js`: `createLogger('notificationService')
 
 - `App`: login / register form, owns `token` and `user`, validates a stored token against `/api/auth/me` on load.
 - `Dashboard`: paginated project list, project create / edit form, notifications panel.
-- `ProjectTasks`: tasks for one project, inline title editing, a priority menu.
+- `ProjectTasks`: tasks for one project, inline title editing, and two badge menus (status and priority) that send only the changed field.
 
-There is no router and no state library: `useState`, `useEffect` and `fetch`. The API base comes from `import.meta.env.VITE_API_BASE` with a `http://localhost:4000` fallback. Styling is Tailwind 4 with ByteMonk colour tokens declared in `src/index.css` under `@theme`.
+There is no router and no state library: `useState`, `useEffect` and `fetch`. The API base comes from `import.meta.env.VITE_API_BASE` with a `http://localhost:4000` fallback. Styling is Tailwind 4 with brand colour tokens declared in `src/index.css` under `@theme`.
 
 ## 7. Tests
 
-`src/services/notificationService.test.js`, run with `npm test`.
+`npm test` runs four suites:
+
+| File | Kind | Needs MongoDB |
+|---|---|---|
+| `src/services/notificationService.test.js` | service unit tests with mocks | no |
+| `test/requireAuth.test.js` | auth middleware and config | no |
+| `test/units.test.js` | `validateEnum`, Task model, error handler | no |
+| `test/routes.test.js` | the real app over HTTP: auth, ownership, tasks, pagination, migration | yes (`MONGO_URI_TEST`) |
+
+```bash
+docker run -d --name taskflow-mongo -p 27017:27017 mongo:7
+MONGO_URI_TEST=mongodb://localhost:27017 npm test
+```
+
+Without `MONGO_URI_TEST` the route tests are skipped, so `npm test` still works offline. GitHub Actions (`.github/workflows/ci.yml`) runs everything against a MongoDB service on every push, and lints and builds the front end.
+
+### The notification service test
 
 The service talks to MongoDB, email and the logger, so the test replaces all three with `jest.mock(...)`. That lets it check behaviour, not infrastructure:
 
@@ -131,41 +149,12 @@ The service talks to MongoDB, email and the logger, so the test replaces all thr
 - a database failure rejects with the generic error
 - each `projectX` / `taskX` helper builds the right type, title and message
 
-Look at how the logger mock is shared (`loggerMock`) so the test can assert on log calls. It's a useful pattern for any module that creates its logger at import time.
+The logger mock is shared (`loggerMock`) so the test can assert on log calls, which works for any module that creates its logger at import time.
 
-## 8. How Cursor is used in this repo
+## 8. Cursor setup
 
-This is the part the project exists to teach. Everything lives in `.cursor/` and is committed, so the whole team (and every agent) gets the same behaviour.
+The repo is developed with Cursor, and its conventions are committed under `.cursor/` so every agent run follows them.
 
-### Rules: `.cursor/rules/`
-
-Rules are standing instructions Cursor's agent reads before it edits code.
-
-- `coding-standards.md`: repo-wide. Structure, quote and semicolon style, the `/api/*` prefix, `requireAuth`, response shapes, validation, ownership checks, "email failures must not fail the request", front-end storage keys. It ends with a **fix-now** list of inconsistencies it found.
-- `backend.md`: scoped to `TaskFlow-Backend/**` and explicitly **not** the React code. This is how you keep back-end conventions from leaking into the front end.
-
-Rules are the "why is the AI suddenly writing code the way our team does" lever. Try deleting one, ask the agent for a new endpoint, and compare.
-
-### Commands: `.cursor/commands/add-logging.md`
-
-A saved prompt you run as `/add-logging` in Cursor chat: import the logger, create one per module, log at the start of every function with context, log in every `catch`. Compare `notificationService.js` before and after tag `step-7-cursor-agent` to see its output.
-
-### Skills: `.cursor/skills/generate/SKILL.md`
-
-A bigger, reusable procedure run as `/generate`. It tells the agent how to scan the repo, infer the conventions that actually exist (not the ideal ones), record inconsistencies, and write both a human doc and a `.cursor/rules/coding-standards.md`. Commands are one-shot prompts; skills carry a method and an output format.
-
-### Cloud agent
-
-The commit tagged `step-7-cursor-agent` ("Cursor: Apply local changes for cloud agent") came from a Cursor cloud agent. It is the biggest single change in the history: rules, command, skill, logger, tests, priorities and pagination. Read its diff to see how much one well-briefed agent run can do, and what you would want to review before merging.
-
-## 9. Exercises
-
-Real rough edges in the code, good for practising with Cursor:
-
-1. **Duplicate `/` route.** `server.js` registers `app.get('/')` twice. Express uses the first, so "Subscribe to ByteMonk" never shows. Keep one. (It's on the fix-now list in `coding-standards.md`.)
-2. **Inconsistent JWT secret.** `requireAuth` falls back to `'dev-secret-change-me'`; `auth.js` has no fallback and fails when `JWT_SECRET` is missing. Make them consistent, ideally by failing fast at startup.
-3. **Bad tokens return 500, not 401.** `jwt.verify` throws on an expired or malformed token, and neither `requireAuth` nor `/me` catches it, so the global error handler answers `500`. Wrap it and return `401 { message }`. Write a test first.
-4. **`/me` duplicates `requireAuth`.** Refactor it to use the middleware.
-5. **Priority vs status.** `urgent`, `blocked` and `in_review` read more like statuses than priorities. Split them into two fields, with a validator for each, and update the UI menu.
-6. **Route tests.** Only the service is tested. Add endpoint tests (for example with `supertest`) for auth and ownership (user B must get `404` on user A's project).
-7. **Run the tools.** Use `/add-logging` on `routes/projects.js`, then `/generate` and diff the new rules against the committed ones.
+- **Rules** (`.cursor/rules/`): `coding-standards.md` applies repo-wide (structure, style, API shapes, validation, ownership, logging, testing). `backend.md` scopes back-end rules to `TaskFlow-Backend/**` so they don't leak into the React code.
+- **Command** (`.cursor/commands/add-logging.md`, run as `/add-logging`): adds a module logger, a log line at the start of every function with context, and error logging in every `catch`. `notificationService.js` and `routes/projects.js` follow it.
+- **Skill** (`.cursor/skills/generate/SKILL.md`, run as `/generate`): scans the repo, infers the conventions it actually follows, records inconsistencies, and writes [coding-practices.md](coding-practices.md) and `.cursor/rules/coding-standards.md`.
