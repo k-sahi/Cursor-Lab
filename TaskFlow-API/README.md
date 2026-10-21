@@ -13,4 +13,4 @@ npm run lint
 
 Point it at a different API with `VITE_API_BASE` in `.env.local`.
 
-Full setup, the follow-along path and the deep dive are in the [root README](../README.md).
+Full setup is in the [root README](../README.md).

@@ -1,17 +1,34 @@
 import { useEffect, useState } from 'react';
 import './App.css';
 
-import bytemonkLogo from './assets/BYTEMONK_LOGO.png';
-
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:4000';
 
-function ByteMonkLogo() {
+function TaskFlowLogo() {
   return (
-    <img
-      src={bytemonkLogo}
-      alt="ByteMonk"
-      className="w-24 h-24 object-contain byte-float select-none"
-    />
+    <svg
+      viewBox="0 0 96 96"
+      role="img"
+      aria-label="TaskFlow"
+      className="w-24 h-24 byte-float select-none"
+    >
+      <defs>
+        <linearGradient id="taskflow-logo-gradient" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#ff6a3d" />
+          <stop offset="100%" stopColor="#ff2ddf" />
+        </linearGradient>
+      </defs>
+      <rect x="10" y="10" width="76" height="76" rx="22" fill="url(#taskflow-logo-gradient)" />
+      <rect x="26" y="30" width="44" height="7" rx="3.5" fill="white" fillOpacity="0.95" />
+      <rect x="26" y="45" width="32" height="7" rx="3.5" fill="white" fillOpacity="0.75" />
+      <path
+        d="M27 64 l7 7 l15 -15"
+        fill="none"
+        stroke="white"
+        strokeWidth="6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
   );
 }
 
@@ -26,6 +43,13 @@ function useAuth() {
     }
   });
   const [loading, setLoading] = useState(false);
+
+  const logout = () => {
+    setToken('');
+    setUser(null);
+    localStorage.removeItem('tf_token');
+    localStorage.removeItem('tf_user');
+  };
 
   useEffect(() => {
     if (!token) return;
@@ -46,7 +70,6 @@ function useAuth() {
     };
     fetchMe();
     return () => controller.abort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   const loginOrRegister = async (mode, payload) => {
@@ -70,23 +93,45 @@ function useAuth() {
     return data;
   };
 
-  const logout = () => {
-    setToken('');
-    setUser(null);
-    localStorage.removeItem('tf_token');
-    localStorage.removeItem('tf_user');
-  };
-
   return { token, user, loading, loginOrRegister, logout };
 }
 
-const TASK_PRIORITIES = ['in_review', 'urgent', 'blocked'];
+// Status (where the task is) and priority (how important it is) are separate
+// fields; the API validates both against the same lists (Task.STATUSES / PRIORITIES).
+const TASK_STATUSES = ['todo', 'in_progress', 'in_review', 'blocked', 'done'];
+const TASK_PRIORITIES = ['low', 'medium', 'high', 'urgent'];
+
+const TASK_FIELDS = {
+  status: { label: 'Status', options: TASK_STATUSES, fallback: 'todo' },
+  priority: { label: 'Priority', options: TASK_PRIORITIES, fallback: 'medium' },
+};
+
+const BADGE_STYLES = {
+  status: {
+    todo: 'border-white/20 text-slate-200',
+    in_progress: 'border-sky-400/40 text-sky-200',
+    in_review: 'border-violet-400/40 text-violet-200',
+    blocked: 'border-rose-400/50 text-rose-200',
+    done: 'border-emerald-400/40 text-emerald-200',
+  },
+  priority: {
+    low: 'border-white/15 text-slate-400',
+    medium: 'border-white/20 text-slate-200',
+    high: 'border-amber-400/40 text-amber-200',
+    urgent: 'border-[#ff6a3d]/60 text-[#ffb59c]',
+  },
+};
+
+const formatOption = (value) => value.replace('_', ' ');
+
+const PROJECTS_PER_PAGE = 6;
 
 function ProjectTasks({ projectId, tasks, onAddTask, onUpdateTask, onDeleteTask }) {
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [editingTaskId, setEditingTaskId] = useState('');
   const [editingTitle, setEditingTitle] = useState('');
-  const [priorityMenuTaskId, setPriorityMenuTaskId] = useState('');
+  // Which badge menu is open: { taskId, field } where field is 'status' or 'priority'.
+  const [openMenu, setOpenMenu] = useState(null);
 
   const handleAdd = (e) => {
     e.preventDefault();
@@ -103,9 +148,7 @@ function ProjectTasks({ projectId, tasks, onAddTask, onUpdateTask, onDeleteTask 
   const submitEdit = (e) => {
     e.preventDefault();
     if (editingTaskId && editingTitle.trim()) {
-      const currentTask = tasks.find((t) => t._id === editingTaskId);
-      const currentPriority = currentTask?.priority || 'in_review';
-      onUpdateTask(projectId, editingTaskId, editingTitle.trim(), currentPriority);
+      onUpdateTask(projectId, editingTaskId, { title: editingTitle.trim() });
       setEditingTaskId('');
       setEditingTitle('');
     }
@@ -116,18 +159,13 @@ function ProjectTasks({ projectId, tasks, onAddTask, onUpdateTask, onDeleteTask 
     setEditingTitle('');
   };
 
-  const openPriorityMenu = (task) => {
-    setPriorityMenuTaskId(task._id);
+  const closeMenu = () => {
+    setOpenMenu(null);
   };
 
-  const closePriorityMenu = () => {
-    setPriorityMenuTaskId('');
-  };
-
-  const setPriority = (task, priority) => {
-    const title = task.title || '';
-    onUpdateTask(projectId, task._id, title, priority);
-    closePriorityMenu();
+  const setTaskField = (task, field, value) => {
+    onUpdateTask(projectId, task._id, { [field]: value });
+    closeMenu();
   };
 
   return (
@@ -184,13 +222,22 @@ function ProjectTasks({ projectId, tasks, onAddTask, onUpdateTask, onDeleteTask 
                   </p>
                 </div>
                 <div className="flex items-center gap-1 transition relative">
-                  <button
-                    type="button"
-                    onClick={() => openPriorityMenu(task)}
-                    className="inline-flex items-center rounded-full border border-white/20 bg-white/[0.05] px-2 py-0.5 text-[0.6rem] font-medium uppercase tracking-wide text-slate-100"
-                  >
-                    <span>{(task.priority || 'in_review').replace('_', ' ')}</span>
-                  </button>
+                  {Object.keys(TASK_FIELDS).map((field) => {
+                    const value = task[field] || TASK_FIELDS[field].fallback;
+                    return (
+                      <button
+                        key={field}
+                        type="button"
+                        title={`${TASK_FIELDS[field].label}: ${formatOption(value)}`}
+                        onClick={() => setOpenMenu({ taskId: task._id, field })}
+                        className={`inline-flex items-center rounded-full border bg-white/[0.05] px-2 py-0.5 text-[0.6rem] font-medium uppercase tracking-wide ${
+                          BADGE_STYLES[field][value] || 'border-white/20 text-slate-100'
+                        }`}
+                      >
+                        <span>{formatOption(value)}</span>
+                      </button>
+                    );
+                  })}
                   <button
                     type="button"
                     onClick={() => startEdit(task)}
@@ -206,19 +253,20 @@ function ProjectTasks({ projectId, tasks, onAddTask, onUpdateTask, onDeleteTask 
                     Delete
                   </button>
 
-                  {priorityMenuTaskId === task._id && (
+                  {openMenu?.taskId === task._id && (
                     <div className="absolute right-0 top-full mt-1 z-10 w-36 rounded-lg border border-white/20 bg-black/90 px-2 py-2 shadow-lg">
                       <p className="mb-1 text-[0.6rem] text-slate-300 uppercase tracking-wide">
-                        Task priority
+                        Task {TASK_FIELDS[openMenu.field].label.toLowerCase()}
                       </p>
                       <div className="space-y-1 mb-2">
-                        {TASK_PRIORITIES.map((priority) => {
-                          const active = (task.priority || 'in_review') === priority;
+                        {TASK_FIELDS[openMenu.field].options.map((option) => {
+                          const current = task[openMenu.field] || TASK_FIELDS[openMenu.field].fallback;
+                          const active = current === option;
                           return (
                             <button
-                              key={priority}
+                              key={option}
                               type="button"
-                              onClick={() => setPriority(task, priority)}
+                              onClick={() => setTaskField(task, openMenu.field, option)}
                               className={`w-full flex items-center justify-between rounded-md px-1.5 py-0.5 text-[0.6rem] ${
                                 active
                                   ? 'bg-emerald-500/20 text-emerald-200 border border-emerald-400/40'
@@ -226,7 +274,7 @@ function ProjectTasks({ projectId, tasks, onAddTask, onUpdateTask, onDeleteTask 
                               }`}
                             >
                               <span className="uppercase tracking-wide">
-                                {priority.replace('_', ' ')}
+                                {formatOption(option)}
                               </span>
                               {active && (
                                 <span className="text-[0.6rem]">✓</span>
@@ -238,7 +286,7 @@ function ProjectTasks({ projectId, tasks, onAddTask, onUpdateTask, onDeleteTask 
                       <div className="flex justify-end gap-1">
                         <button
                           type="button"
-                          onClick={closePriorityMenu}
+                          onClick={closeMenu}
                           className="text-[0.6rem] text-slate-400 hover:text-slate-200"
                         >
                           Cancel
@@ -274,7 +322,6 @@ function Dashboard({ user, onLogout, token }) {
   const [projects, setProjects] = useState([]);
   const [projectPage, setProjectPage] = useState(1);
   const [projectTotalPages, setProjectTotalPages] = useState(1);
-  const PROJECTS_PER_PAGE = 6;
   const [selectedProjectId, setSelectedProjectId] = useState(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingId, setEditingId] = useState('');
@@ -321,22 +368,30 @@ function Dashboard({ user, onLogout, token }) {
     setNotifications([]);
   };
 
+  // Initial load. State is only set in the promise callbacks (after the requests
+  // resolve), not synchronously in the effect body, and a stale response from a
+  // previous token is ignored.
   useEffect(() => {
-    fetchProjects(1);
-    fetchNotifications();
+    let cancelled = false;
+    const headers = { Authorization: `Bearer ${token}` };
+    Promise.all([
+      fetch(`${API_BASE}/api/projects?page=1&limit=${PROJECTS_PER_PAGE}`, { headers }).then((r) => r.json()),
+      fetch(`${API_BASE}/api/notifications`, { headers }).then((r) => r.json()),
+    ])
+      .then(([projectData, notificationData]) => {
+        if (cancelled) return;
+        setProjects(projectData.projects || []);
+        setProjectPage(projectData.pagination?.page || 1);
+        setProjectTotalPages(projectData.pagination?.totalPages || 1);
+        setNotifications(notificationData.notifications || []);
+      })
+      .catch(() => {
+        // Network errors leave the empty dashboard in place.
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [token]);
-
-  useEffect(() => {
-    if (!selectedProjectId && projects.length > 0) {
-      setSelectedProjectId(projects[0]._id);
-    } else if (
-      selectedProjectId &&
-      projects.length > 0 &&
-      !projects.some((p) => p._id === selectedProjectId)
-    ) {
-      setSelectedProjectId(projects[0]._id);
-    }
-  }, [projects, selectedProjectId]);
 
   const createProject = async () => {
     setEditingId('');
@@ -428,9 +483,11 @@ function Dashboard({ user, onLogout, token }) {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ title: title.trim(), priority: 'in_review' }),
+      // status and priority use the API defaults (todo, medium)
+      body: JSON.stringify({ title: title.trim() }),
     });
     const data = await res.json();
+    if (!res.ok || !data.task) return;
     setProjects((prev) =>
       prev.map((p) =>
         p._id === projectId
@@ -441,8 +498,9 @@ function Dashboard({ user, onLogout, token }) {
     fetchNotifications();
   };
 
-  const updateTask = async (projectId, taskId, title, priority = 'in_review') => {
-    if (!title || !title.trim()) return;
+  // changes: any of { title, status, priority }; the API accepts partial updates.
+  const updateTask = async (projectId, taskId, changes) => {
+    if (changes.title !== undefined && !changes.title.trim()) return;
     const res = await fetch(
       `${API_BASE}/api/projects/${projectId}/tasks/${taskId}`,
       {
@@ -451,10 +509,11 @@ function Dashboard({ user, onLogout, token }) {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ title: title.trim(), priority }),
+        body: JSON.stringify(changes),
       }
     );
     const data = await res.json();
+    if (!res.ok || !data.task) return;
     setProjects((prev) =>
       prev.map((p) =>
         p._id === projectId
@@ -494,10 +553,10 @@ function Dashboard({ user, onLogout, token }) {
 
       <div className="flex items-center justify-between gap-4 mb-8">
         <div className="flex items-center gap-4">
-          <ByteMonkLogo />
+          <TaskFlowLogo />
           <div>
             <p className="text-[0.7rem] tracking-[0.3em] uppercase text-slate-400">
-              ByteMonk TaskFlow
+              TaskFlow
             </p>
             <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">
               <span className="byte-gradient-text">Projects</span> overview
@@ -633,7 +692,7 @@ function Dashboard({ user, onLogout, token }) {
             <div
               key={project._id}
               className={`relative rounded-2xl border px-4 py-4 sm:px-5 sm:py-5 overflow-hidden transition-colors ${
-                project._id === selectedProjectId
+                project._id === selectedProject?._id
                   ? 'border-white/60 bg-white/[0.06]'
                   : 'border-white/15 bg-white/[0.02] hover:border-white/40 hover:bg-white/[0.03]'
               }`}
@@ -728,7 +787,7 @@ function Dashboard({ user, onLogout, token }) {
                     <span className="byte-gradient-text">
                       {editingId ? 'Update' : 'Create'}
                     </span>{' '}
-                    ByteMonk space
+                    project
                   </h2>
                 </div>
                 <button
@@ -859,10 +918,10 @@ function App() {
 
           <div className="relative z-10 rounded-[25px] px-6 sm:px-7 py-7 sm:py-8 flex flex-col gap-6 backdrop-blur-2xl bg-gradient-to-b from-white/7 via-white/3 to-white/[0.03]">
             <div className="flex flex-col items-center gap-4 text-center">
-              <ByteMonkLogo />
+              <TaskFlowLogo />
               <div className="space-y-1.5">
                 <p className="text-[0.7rem] tracking-[0.25em] uppercase text-slate-400">
-                  ByteMonk TaskFlow
+                  TaskFlow
                 </p>
                 <h1 className="text-2xl sm:text-[1.6rem] font-semibold tracking-tight">
                   <span className="byte-gradient-text">Sign in</span> to your workspace
@@ -909,7 +968,7 @@ function App() {
                   onChange={onChange}
                   autoComplete="email"
                   className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-slate-50 shadow-[0_0_0_1px_rgba(255,255,255,0.03)] outline-none transition focus:border-[#ff2ddf] focus:shadow-[0_0_0_1px_rgba(255,45,223,0.6),0_16px_36px_rgba(0,0,0,0.7)] placeholder:text-slate-500"
-                  placeholder="you@bytemonk.dev"
+                  placeholder="you@example.com"
                   required
                 />
               </div>
@@ -948,7 +1007,7 @@ function App() {
                   ) : mode === 'login' ? (
                     <>Enter dashboard</>
                   ) : (
-                    <>Create ByteMonk seat</>
+                    <>Create account</>
                   )}
                 </span>
               </button>
